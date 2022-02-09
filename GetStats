@@ -1,0 +1,49 @@
+def GetDFStats(df):
+    '''
+    Return a Pandas DataFrame recording the stats of the input DataFrame detailing data types, counts, missing_counts,
+    missing_percentages, number of unique values, mean, min, max values and standard deviations.        
+
+    Can only apply to string, int and double types.
+
+    Parameters
+    ----------
+    df : PySpark DataFrame
+        DataFrame of interest.
+
+    Returns
+    -------
+    report : Pandas DataFrame 
+        Stats spreadsheet.
+
+    '''
+    
+    report = df.describe().toPandas()
+    
+    report = report.set_index('summary').T.reset_index()
+    dt = pd.DataFrame(df.dtypes, columns = ['index', 'data_type'])
+    report = report.merge(dt, on='index', how='inner')
+    report['n_unique'] = ''
+
+    # collect number of missing values for each column
+    missing_values_dct = {} 
+    for column_name in df.columns:
+        if report.loc[report['index'] == column_name, 'data_type'].iloc[0] == 'string':  
+            # count Null values. 
+            missing_count = df.filter(col(column_name).isNull()).count()
+            # If want to detect '', use the following
+            # missing_count = df.filter(col(column_name).isNull() | col(column_name).eqNullSafe('')).count()
+            missing_values_dct[column_name] = missing_count
+            report.loc[report['index'] == column_name, 'n_unique'] = df.select(col(column_name)).distinct().count()
+            
+        if report.loc[report['index'] == column_name, 'data_type'].iloc[0] in ['int', 'double']:   
+            # count Null and NaN values
+            missing_count = df.filter(col(column_name).isNull() | isnan(col(column_name))).count()
+            missing_values_dct[column_name] = missing_count
+
+    missing_df = pd.DataFrame.from_dict(missing_values_dct, orient='index', columns=['missing_count']).reset_index()
+    report = report.merge(missing_df, on='index', how='left')
+    report = report.rename(columns={'index': 'column'})
+    report['missing_pct'] = report['missing_count'] / df.count()
+    report = report.reindex(columns=['column', 'data_type', 'count', 'missing_count', 'missing_pct', 'n_unique', 'mean', 'min', 'max', 'stddev'])
+
+    return report
